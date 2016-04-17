@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html>
+	<meta charset="utf-8">
+	<head>
+		<style type="text/css">
+
+		svg {
+			font-family: "Helvetica Neue", Helvetica;
+		}
+
+		path { 
+			stroke: steelblue;
+			stroke-width: 4;
+			fill: none;
+		}
+
+		.axis path,
+		.axis line {
+			fill: none;
+			stroke: grey;
+			stroke-width: 1;
+			shape-rendering: crispEdges;
+		}
+
+		.agender {
+			stroke: green;
+			stroke-opacity: 0.2;
+		}
+
+		.male {
+			stroke: blue;
+		}
+
+		.female {
+			stroke: pink;
+		}
+
+
+		.name_list {
+			margin: 20px;
+		}
+
+		#similar_spelling_names {
+			float: right;
+		}
+
+		#similar_year_names {
+			float: right;
+		}
+
+		th {
+			text-align: left;
+		}
+
+		#graph {
+			float: left;
+		}
+
+		#name_search {
+			width: 200px;
+		}
+
+		p {
+			margin: 0px;
+			padding: 1px;
+		}
+
+
+		</style>
+		<script src="//d3js.org/d3.v3.min.js"></script>
+		<script src="js/fuse.min.js"></script>
+	</head>
+	<body>
+		<p>Search for name: <input id="name_search", placeholder="Baby Name..."></p>
+		<button id="random_name_button">Random Name</button>
+		<h3 id="graph_title">Popularity of ?</h3>
+		<br style="clear: both"/>
+		<div class="name_list" id="similar_year_names">
+			<h2>Similarly Year Names</h2>
+			<table>
+				<thead>
+					<tr>
+						<th>Name</th>
+						<th>Year Centroid</th>
+					</tr>
+				</thead>
+				<tbody class="vertical_name_list"></tbody>
+			</table>
+			
+		</div>
+		<div class="name_list" id="similar_spelling_names">
+			<h2>Similarly Spelled Names</h2>
+			<table>
+				<thead>
+					<tr>
+						<th>Name</th>
+						<th>Most Popular Year</th>
+					</tr>
+				</thead>
+				<tbody class="vertical_name_list"></tbody>
+			</table>
+			
+		</div>
+		<div id="graph"></div>
+	</body>
+	<script>
+		var max_search_results = 50;
+		var min_year = 1880;
+		var max_year = 2014;
+		var width = 800;
+		var height = 500;
+		var min_popularity = 0;
+		var graph_popularities = [];
+		var margin = {
+			top: 40,
+			bottom: 40,
+			left: 100,
+			right: 40
+		};
+
+		var max_popularity = 1;
+		var name_centroids = {}
+		var year_lists = {}
+
+		var year_scale = d3.scale.linear()
+			.domain([min_year, max_year])
+			.range([0, width]);
+
+		var popularity_scale = d3.scale.linear()
+			.domain([0, max_popularity])
+			.range([height, 0]);
+
+		/* Define the axes */
+		var xAxis = d3.svg.axis().scale(year_scale)
+			.orient("bottom").ticks(20).tickFormat(d3.format("d"));
+		var yAxis = d3.svg.axis().scale(popularity_scale)
+		.orient("left").ticks(5).tickFormat(function(x) {return Math.round(1.0 / x)});
+
+
+			
+		// Adds the svg canvas
+		var svg = d3.select("#graph")
+			.append("svg")
+				.attr("width", width + margin.left + margin.right)
+				.attr("height", height + margin.top + margin.bottom)
+			.append("g")
+				.attr("transform", 
+					  "translate(" + margin.left + "," + margin.top + ")");
+
+		// Add the Axes
+		svg.append("g")
+			.attr("class", "x axis")
+			.attr("transform", "translate(0," + height + ")")
+			.call(xAxis);
+		svg.append("g")
+			.attr("class", "y axis yaxis")
+			.call(yAxis);
+
+		function percentage(num) {
+			return (num * 100) + "%";
+		}
+
+		function capitalize(s) {
+			return s.charAt(0).toUpperCase() + s.slice(1);
+		}
+
+
+		d3.json('data/namelist.json', function(error, data) {
+			var fuse_options = {
+				caseSensitive: false,
+				includeScore: false,
+				shouldSort: true,
+				threshold: 0.3,
+				maxPatternLength: 32,
+			};
+			var fuse = new Fuse(data.names, fuse_options);
+			var fuse_search_timer = null;
+			var fuse_search_delay_ms = 500;
+			var popularity_color = d3.scale.log()
+				.domain([0.000002, 0.001])
+				.range(['blue', 'green']);
+
+
+			/* remove lines and reset maximum popularity */
+			function clear_graph() {
+				max_popularity = 0;
+				svg.selectAll(".line").remove();
+			}
+
+			/* replot everything after loading data into "popularity" */
+			function replot() {
+				clear_graph();
+				max_popularity = 0;
+				/* get maximum value of all popularities */
+				graph_popularities.forEach(function(pop_info) {
+					var max_pop = d3.max(pop_info.popularity, function(x) { return x.popularity; });
+					if (max_pop > max_popularity) {
+						max_popularity = max_pop;
+						popularity_scale.domain([0, max_popularity]);
+					}
+				});
+	
+				/* setup y axis to maximum value */
+				svg.select(".yaxis").call(yAxis);
+
+				/* plot lines */
+				graph_popularities.forEach(function(pop_info) {
+					// Define the line
+					var valueline = d3.svg.line()
+						.x(function(d) { return year_scale(d.year); })
+						.y(function(d) { return popularity_scale(d.popularity); });
+						
+					// Add the valueline path.
+					svg.append("path")
+						.attr("class", "line " + pop_info.gender)
+						.attr("d", valueline(pop_info.popularity));
+				});
+			}
+
+			/* add name to list of similar names */
+			function add_candidate(name) {
+				var url = 'data/' + name[0].toLowerCase() + '/' + capitalize(name) + '_A.json';
+				var name_max_year = '';
+				var name_max_popularity = 0;
+
+				d3.json(url, function(name_data) {
+					var pop = name_data.popularity;
+					for (var year in pop) {
+						if (pop.hasOwnProperty(year)) {
+							if (pop[year] > name_max_popularity) {
+								name_max_popularity = pop[year];
+								name_max_year = year;
+							}
+						}
+					}
+					var name_list = d3.select("#similar_spelling_names").select(".vertical_name_list");
+					var row = name_list.append("tr");
+					row.append("td").html(name);
+					row.append("td").append('span').html(name_max_year).style('color', popularity_color(name_max_popularity));
+					row.on("click", function() {
+						var input_data= d3.select("#name_search").property("value", name);
+						update_candidates();
+						load_name(name);
+					});
+				});
+			}
+
+			/* update the candidate baby names */
+			function update_candidates() {
+				var input_data= d3.select("#name_search").property("value");
+				var locations = fuse.search(input_data);
+				if (locations.length > max_search_results) {
+					locations = locations.slice(0, max_search_results);
+				}
+
+				var name_holder = d3.select("#similar_spelling_names").select(".vertical_name_list");
+				name_holder.html("");
+				var candidate_names = [];
+				locations.forEach(function(index) {
+					var babyname = data.names[index];
+					add_candidate(babyname);
+				});
+			}
+
+			function display_year_data(name) {
+				var name_holder = d3.select("#similar_year_names").select(".vertical_name_list");
+				name_holder.html("");
+				if (name_centroids.hasOwnProperty(name)) {
+					var y = name_centroids[name];
+					if (year_lists.hasOwnProperty(y)) {
+						var data = year_lists[y];
+						var rows = name_holder.selectAll("tr").data(data);
+						var row = rows.enter().append("tr")
+							.on("click", function(x) {
+								var input_data= d3.select("#name_search").property("value", x);
+								update_candidates();
+								load_name(x);
+							});
+						row.append("td").html(function(x) { return x; })
+						row.append("td").html(y);
+						rows.exit().remove();
+					}
+				}
+			}
+
+
+			/* load data for a new name */
+			function load_name(name) {
+				window.location.hash = name
+				if (name.length < 1) {
+					return;
+				}
+				clear_graph();
+				graph_popularities = [];
+				d3.select("#graph_title").text("Popularity of " + capitalize(name));
+				plot_name(name, "agender");
+				plot_name(name, "male");
+				plot_name(name, "female");
+				display_year_data(name);
+			}
+
+			function plot_name(name, gender) {
+				var url = 'data/' + name[0].toLowerCase() + '/' + capitalize(name); 
+				if (gender === "agender") {
+					url += '_A.json';
+				}
+				else if (gender === "male") {
+					url += '_M.json';
+				}
+				else if (gender === "female") {
+					url += '_F.json';
+				}
+
+				d3.json(url, function(error, name_data) {
+					if (error) return console.warn(error);
+					var info = {
+						gender: gender,
+						name: name,
+						popularity: []
+					};
+	
+					for (var i = min_year; i < max_year; i++) {
+						var val = name_data.popularity[i];
+						if (val) {
+							info.popularity.push({ year: i, popularity: val });
+						}
+						else {
+							info.popularity.push({ year: i, popularity: 0.0 });
+						}
+					}
+					var max_pop = d3.max(info.popularity, function(x) { return x.popularity; });
+					/*
+					if (max_pop > max_popularity) {
+						max_popularity = max_pop;
+						popularity_scale.domain([0, max_popularity]);
+						svg.select(".yaxis").call(yAxis);
+					}
+
+					// Define the line
+					var valueline = d3.svg.line()
+						.x(function(d) { return year_scale(d.year); })
+						.y(function(d) { return popularity_scale(d.popularity); });
+						
+					// Add the valueline path.
+					svg.append("path")
+						.attr("class", "line " + gender)
+						.attr("d", valueline(popularity));
+					*/
+					graph_popularities.push(info);
+					replot();
+				});
+			}
+
+			d3.select("#name_search").on("input", function() {
+				if (fuse_search_timer) {
+					clearTimeout(fuse_search_timer);
+					fuse_search_timer = null;
+				}
+				fuse_search_timer = setTimeout(update_candidates, fuse_search_delay_ms);
+			})
+			.on("keyup", function() {
+				if (event.keyCode == 13) {
+					var input_data= d3.select("#name_search").property("value");
+					load_name(input_data);
+				}
+			});
+				
+			d3.json('data/yearlists.json', function(error, data) {
+				year_lists = data;
+				display_year_data(d3.select("#name_search").property("value"));
+			});
+
+			d3.json('data/namecentroids.json', function(error, data) {
+				name_centroids = data;
+				display_year_data(d3.select("#name_search").property("value"));
+			});
+
+			function load_random_name() {
+				/* initialize with random name */
+				var random_name = data.names[Math.floor(Math.random() * data.names.length)];
+				d3.select("#name_search").property("value", random_name);
+				update_candidates();
+				load_name(random_name);
+			}
+
+			d3.select("#random_name_button").on("click", load_random_name);
+
+			/* load initial name */
+			var existing_name = window.location.hash.replace("#", "");
+			if (existing_name.length > 1) {
+				/* load existing name from url hash */
+				d3.select("#name_search").property("value", existing_name);
+				update_candidates();
+				load_name(existing_name);
+			}
+			else {
+				/* initialize with random name */
+				load_random_name();
+			}
+
+		});
+	</script>
+</html>
+
