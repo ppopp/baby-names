@@ -157,7 +157,7 @@ def write_names(names, output_directory):
         output_data['counts'] = counts
         output_data['popularity'] = popularity
 
-        _logger.info('writing output to {0}'.format(output_path))
+        _logger.debug('writing output to {0}'.format(output_path))
         json.dump(output_data, open(output_path, 'w'))
 
 

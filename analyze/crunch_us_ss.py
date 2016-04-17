@@ -3,6 +3,7 @@ import logging
 import json
 import os
 import codecs
+import copy
 
 import us_ss
 import crunch
@@ -15,9 +16,8 @@ def _main(**kwargs):
     names = us_ss.load(kwargs['input_directory'])
 
     # separate names into groups 
-    male_names = filter(lambda x: x['gender']=='M', names)
-    female_names = filter(lambda x: x['gender']=='F', names)
-    all_names = crunch.merge_genders(names)
+    male_names = copy.deepcopy(filter(lambda x: x['gender']=='M', names))
+    female_names = copy.deepcopy(filter(lambda x: x['gender']=='F', names))
 
     # process name group (male/female) separately
     name_groups = [male_names, female_names]
@@ -27,6 +27,7 @@ def _main(**kwargs):
         crunch.write_names(name_group, kwargs['output_directory'])
 
     # process global information 
+    all_names = crunch.merge_genders(names)
     _logger.info('processing all names')
     all_names = crunch.popularity(all_names)
     crunch.write_names(all_names, kwargs['output_directory'])
@@ -59,6 +60,6 @@ if __name__ == '__main__':
     parser.add_argument('output_directory')
 
     kwargs = vars(parser.parse_args())
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     _main(**kwargs)
 
