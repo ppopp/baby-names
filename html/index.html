@@ -2,6 +2,8 @@
 <html>
 	<meta charset="utf-8">
 	<head>
+    <link rel=stylesheet type=text/css href="css/normalize.css">
+    <link rel=stylesheet type=text/css href="css/skeleton.css">
 		<style type="text/css">
 
 		svg {
@@ -14,6 +16,12 @@
 			fill: none;
 		}
 
+    #hittest {
+      opacity: 0;
+    }
+    #clippath {
+    }
+
 		.axis path,
 		.axis line {
 			fill: none;
@@ -23,30 +31,32 @@
 		}
 
 		.agender {
-			stroke: green;
-			stroke-opacity: 0.2;
+			stroke: #66FF99;
+			stroke-opacity: 0.75;
+      background-color: #99FFCC;
 		}
 
 		.male {
-			stroke: blue;
+			stroke: #99CCFF;
+			stroke-opacity: 0.75;
+      background-color: #CCDDFF;
 		}
 
 		.female {
 			stroke: pink;
+			stroke-opacity: 0.75;
+			background-color: pink;
 		}
+    .toggle_off {
+      background-color: white;
+    }
+
+    button.plot_toggle {
+      width: 100%;
+    }
 
 
-		.name_list {
-			margin: 20px;
-		}
 
-		#similar_spelling_names {
-			float: right;
-		}
-
-		#similar_year_names {
-			float: right;
-		}
 
 		th {
 			text-align: left;
@@ -60,82 +70,130 @@
 			width: 200px;
 		}
 
-		p {
-			margin: 0px;
-			padding: 1px;
-		}
 
 
 		</style>
-		<script src="//d3js.org/d3.v3.min.js"></script>
+		<script src="js/d3.v3.min.js"></script>
 		<script src="js/fuse.min.js"></script>
 	</head>
 	<body>
-		<p>Search for name: <input id="name_search", placeholder="Baby Name..."></p>
-		<button id="random_name_button">Random Name</button>
-		<h3 id="graph_title">Popularity of ?</h3>
-		<br style="clear: both"/>
-		<div class="name_list" id="similar_year_names">
-			<h2>Similarly Year Names</h2>
-			<table>
-				<thead>
-					<tr>
-						<th>Name</th>
-						<th>Year Centroid</th>
-					</tr>
-				</thead>
-				<tbody class="vertical_name_list"></tbody>
-			</table>
-			
-		</div>
-		<div class="name_list" id="similar_spelling_names">
-			<h2>Similarly Spelled Names</h2>
-			<table>
-				<thead>
-					<tr>
-						<th>Name</th>
-						<th>Most Popular Year</th>
-					</tr>
-				</thead>
-				<tbody class="vertical_name_list"></tbody>
-			</table>
-			
-		</div>
-		<div id="graph"></div>
+    <div class="container">
+      <div class="row">
+        <p>Search for name: <input id="name_search", placeholder="Baby Name..."></p>
+        <button id="random_name_button">Random Name</button>
+        <select id="metric_select"></select>
+      </div>
+      <div class="row">
+        <div class="ten columns">
+          <h3 id="graph_title">Popularity of ?</h3>
+        </div>
+      </div>
+      <div class="row">
+        <div class="three columns">
+          <button id="female_plot_toggle", class="plot_toggle female">Female</button>
+        </div>
+        <div class="three columns">
+          <button id="male_plot_toggle" class="plot_toggle male">Male</button>
+        </div>
+        <div class="three columns">
+          <button id="agender_plot_toggle" class="plot_toggle agender">Female + Male</button>
+        </div>
+      </div>
+      <div class="row">
+        <div id="graph"></div>
+      </div>
+      <div class="row">
+        <div class="name_list" id="similar_spelling_names">
+          <h2>Similarly Spelled Names</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Most Popular Year</th>
+              </tr>
+            </thead>
+            <tbody class="vertical_name_list"></tbody>
+          </table>
+          
+        </div>
+      </div>
+    </div>
 	</body>
 	<script>
 		var max_search_results = 50;
 		var min_year = 1880;
-		var max_year = 2014;
+		var max_year = 2016;
 		var width = 800;
 		var height = 500;
-		var min_popularity = 0;
-		var graph_popularities = [];
 		var margin = {
 			top: 40,
 			bottom: 40,
 			left: 100,
 			right: 40
 		};
+		var graph_data = [];
 
-		var max_popularity = 1;
+    var y_domain = [0, 1];
 		var name_centroids = {}
 		var year_lists = {}
+
+    var metrics = [
+      { 
+        field:"popularity", 
+        display:"Popularity", 
+        invert_y: false, 
+        source_data: "popularity", 
+        transform: function(d) { return d;}
+      },
+      { 
+        field:"rank", 
+        display:"Rank", 
+        invert_y: true,
+        source_data: "rank", 
+        transform: function(d) { return d;}
+      },
+      { 
+        field:"per_million", 
+        display:"Per Million Births", 
+        invert_y: false,
+        source_data: "popularity", 
+        transform: function(d) { return Math.round(d * 1000000);}
+      }
+    ];
+    var metric = metrics[0];
+
+    /* fuse options for similar name searching */
+    var fuse_options = {
+      caseSensitive: false,
+      includeScore: false,
+      shouldSort: true,
+      threshold: 0.3,
+      maxPatternLength: 32,
+    };
+    var fuse_search_timer = null;
+    var fuse_search_delay_ms = 500;
+
+
+    /* setup zoom and scale */
+    var zoom = d3.behavior.zoom()
+        .scaleExtent([1, 20])
+        .on("zoom", zoomed);
 
 		var year_scale = d3.scale.linear()
 			.domain([min_year, max_year])
 			.range([0, width]);
+    zoom.x(year_scale);
 
-		var popularity_scale = d3.scale.linear()
-			.domain([0, max_popularity])
+		var y_scale = d3.scale.linear()
+			.domain(y_domain)
 			.range([height, 0]);
+    zoom.y(y_scale);
 
 		/* Define the axes */
 		var xAxis = d3.svg.axis().scale(year_scale)
 			.orient("bottom").ticks(20).tickFormat(d3.format("d"));
-		var yAxis = d3.svg.axis().scale(popularity_scale)
-		.orient("left").ticks(5).tickFormat(function(x) {return Math.round(1.0 / x)});
-
+		var yAxis = d3.svg.axis().scale(y_scale)
+      .orient("left").ticks(5);
 
 			
 		// Adds the svg canvas
@@ -144,17 +202,35 @@
 				.attr("width", width + margin.left + margin.right)
 				.attr("height", height + margin.top + margin.bottom)
 			.append("g")
-				.attr("transform", 
-					  "translate(" + margin.left + "," + margin.top + ")");
+				.attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+    
 
 		// Add the Axes
 		svg.append("g")
-			.attr("class", "x axis")
+			.attr("class", "x axis xaxis")
 			.attr("transform", "translate(0," + height + ")")
 			.call(xAxis);
 		svg.append("g")
 			.attr("class", "y axis yaxis")
 			.call(yAxis);
+
+    svg.append("svg:clipPath")
+      .attr("id", "clippath")
+      .append("rect")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("x", 0)
+      .attr("y", 0);
+
+    var container = svg.append("g").attr("clip-path", "url(#clippath)").append("g").attr("class", "container");
+    var hittest = svg.append("g");
+    hittest.append("rect")
+      .attr("width", width)
+      .attr("height", height)
+      .attr("x", 0)
+      .attr("y", 0)
+      .attr("id", "hittest")
+      .call(zoom);
 
 		function percentage(num) {
 			return (num * 100) + "%";
@@ -164,71 +240,98 @@
 			return s.charAt(0).toUpperCase() + s.slice(1);
 		}
 
+    function zoomed() {
+      container.attr("transform", "translate(" + d3.event.translate + ")scale(" + d3.event.scale + ")");
+      svg.select(".yaxis").call(yAxis);
+      svg.select(".xaxis").call(xAxis);
+    }
 
+
+    /* load list of names */
 		d3.json('data/namelist.json', function(error, data) {
-			var fuse_options = {
-				caseSensitive: false,
-				includeScore: false,
-				shouldSort: true,
-				threshold: 0.3,
-				maxPatternLength: 32,
-			};
 			var fuse = new Fuse(data.names, fuse_options);
-			var fuse_search_timer = null;
-			var fuse_search_delay_ms = 500;
-			var popularity_color = d3.scale.log()
-				.domain([0.000002, 0.001])
-				.range(['blue', 'green']);
-
+      var visible_genders = { male: true, female: true, agender: true };
 
 			/* remove lines and reset maximum popularity */
 			function clear_graph() {
-				max_popularity = 0;
+        y_domain = [0, 1];
 				svg.selectAll(".line").remove();
 			}
+
+      /* setup scaling and orientation */
+      function set_graph_scale_and_orientation(visible_data, metric) {
+          var extremes = [];
+
+          /* get maximum value of all popularities */
+          visible_data.forEach(function(name_gender) {
+            extremes = extremes.concat(d3.extent(name_gender[metric.field], function(x) { return x.value; }));
+          });
+          y_domain = d3.extent(extremes)
+          y_scale.domain(y_domain);
+          if (metric.invert_y) {
+            y_scale.range([0, height]);
+          }
+          else {
+            y_scale.range([height, 0]);
+          }
+  
+          /* setup y axis to maximum value */
+          zoom.y(y_scale);
+          svg.select(".yaxis").call(yAxis);
+          year_scale.domain([min_year, max_year])
+          zoom.x(year_scale);
+          svg.select(".xaxis").call(xAxis);
+          container.attr("transform", "translate(0,0)scale(1)");
+      }
 
 			/* replot everything after loading data into "popularity" */
 			function replot() {
 				clear_graph();
-				max_popularity = 0;
-				/* get maximum value of all popularities */
-				graph_popularities.forEach(function(pop_info) {
-					var max_pop = d3.max(pop_info.popularity, function(x) { return x.popularity; });
-					if (max_pop > max_popularity) {
-						max_popularity = max_pop;
-						popularity_scale.domain([0, max_popularity]);
-					}
-				});
-	
-				/* setup y axis to maximum value */
-				svg.select(".yaxis").call(yAxis);
+        var visible_graph_data = graph_data.filter(function(d) { return visible_genders[d.gender];});
 
-				/* plot lines */
-				graph_popularities.forEach(function(pop_info) {
-					// Define the line
-					var valueline = d3.svg.line()
-						.x(function(d) { return year_scale(d.year); })
-						.y(function(d) { return popularity_scale(d.popularity); });
-						
-					// Add the valueline path.
-					svg.append("path")
-						.attr("class", "line " + pop_info.gender)
-						.attr("d", valueline(pop_info.popularity));
-				});
+        if (visible_graph_data.length > 0) {
+          set_graph_scale_and_orientation(visible_graph_data, metric);
+          /* plot lines */
+          visible_graph_data.forEach(function(name_gender) {
+            // Define the line
+            var valueline = d3.svg.line()
+              .x(function(d) { return year_scale(d.year); })
+              .y(function(d) { return y_scale(d.value); });
+              
+            // Add the valueline path.
+            container.append("path")
+              .attr("class", "line " + name_gender.gender)
+              .attr("d", valueline(name_gender[metric.field]))
+              .attr("vector-effect", "non-scaling-stroke");
+          });
+        }
 			}
+
+      /* setup combo box for choosing metrics */
+      var select = d3.select('#metric_select').on('change', set_metric)
+      var options = select.selectAll('option').data(metrics).enter()
+        .append('option')
+        .text(function (d) { return d.field; })
+        .attr("label", function(d) { return d.display; });
+
+      function set_metric() {
+        var selected_metric = d3.select('#metric_select').property('value')
+        metric = metrics.filter(function(d) { return d.field == selected_metric; })[0];
+        replot();
+      };
 
 			/* add name to list of similar names */
 			function add_candidate(name) {
 				var url = 'data/' + name[0].toLowerCase() + '/' + capitalize(name) + '_A.json';
 				var name_max_year = '';
-				var name_max_popularity = 0;
+				var name_max_y = 0;
 
 				d3.json(url, function(name_data) {
 					var pop = name_data.popularity;
 					for (var year in pop) {
 						if (pop.hasOwnProperty(year)) {
-							if (pop[year] > name_max_popularity) {
-								name_max_popularity = pop[year];
+							if (pop[year] > name_max_y) {
+								name_max_y = pop[year];
 								name_max_year = year;
 							}
 						}
@@ -236,7 +339,6 @@
 					var name_list = d3.select("#similar_spelling_names").select(".vertical_name_list");
 					var row = name_list.append("tr");
 					row.append("td").html(name);
-					row.append("td").append('span').html(name_max_year).style('color', popularity_color(name_max_popularity));
 					row.on("click", function() {
 						var input_data= d3.select("#name_search").property("value", name);
 						update_candidates();
@@ -291,12 +393,11 @@
 					return;
 				}
 				clear_graph();
-				graph_popularities = [];
-				d3.select("#graph_title").text("Popularity of " + capitalize(name));
+				graph_data = [];
+				d3.select("#graph_title").text(capitalize(name));
 				plot_name(name, "agender");
 				plot_name(name, "male");
 				plot_name(name, "female");
-				display_year_data(name);
 			}
 
 			function plot_name(name, gender) {
@@ -311,42 +412,30 @@
 					url += '_F.json';
 				}
 
+        /* load and format name data */
 				d3.json(url, function(error, name_data) {
 					if (error) return console.warn(error);
 					var info = {
 						gender: gender,
-						name: name,
-						popularity: []
+						name: name
 					};
-	
-					for (var i = min_year; i < max_year; i++) {
-						var val = name_data.popularity[i];
-						if (val) {
-							info.popularity.push({ year: i, popularity: val });
-						}
-						else {
-							info.popularity.push({ year: i, popularity: 0.0 });
-						}
-					}
-					var max_pop = d3.max(info.popularity, function(x) { return x.popularity; });
-					/*
-					if (max_pop > max_popularity) {
-						max_popularity = max_pop;
-						popularity_scale.domain([0, max_popularity]);
-						svg.select(".yaxis").call(yAxis);
-					}
 
-					// Define the line
-					var valueline = d3.svg.line()
-						.x(function(d) { return year_scale(d.year); })
-						.y(function(d) { return popularity_scale(d.popularity); });
-						
-					// Add the valueline path.
-					svg.append("path")
-						.attr("class", "line " + gender)
-						.attr("d", valueline(popularity));
-					*/
-					graph_popularities.push(info);
+          metrics.forEach(function(metric) {
+            info[metric.field] = [];
+            if (name_data.hasOwnProperty(metric.source_data)) {
+              var field_data = name_data[metric.source_data];
+              for (var i = min_year; i < max_year; i++) {
+                if (field_data.hasOwnProperty(i)) {
+                  info[metric.field].push({
+                    year: i,
+                    value: metric.transform(field_data[i])
+                  });
+                }
+              }
+            }
+          });
+                
+					graph_data.push(info);
 					replot();
 				});
 			}
@@ -364,16 +453,6 @@
 					load_name(input_data);
 				}
 			});
-				
-			d3.json('data/yearlists.json', function(error, data) {
-				year_lists = data;
-				display_year_data(d3.select("#name_search").property("value"));
-			});
-
-			d3.json('data/namecentroids.json', function(error, data) {
-				name_centroids = data;
-				display_year_data(d3.select("#name_search").property("value"));
-			});
 
 			function load_random_name() {
 				/* initialize with random name */
@@ -384,6 +463,25 @@
 			}
 
 			d3.select("#random_name_button").on("click", load_random_name);
+
+      /* add plotting toggles */
+      function toggle_gender_plot(gender) {
+        visible_genders[gender] = visible_genders[gender] ? false : true;
+        replot();
+      }
+
+      d3.select("#male_plot_toggle").on("click", function() {
+        toggle_gender_plot("male");
+        d3.select("#male_plot_toggle").classed("toggle_off", !visible_genders["male"]);
+      });
+      d3.select("#female_plot_toggle").on("click", function() {
+        toggle_gender_plot("female");
+        d3.select("#female_plot_toggle").classed("toggle_off", !visible_genders["female"]);
+      });
+      d3.select("#agender_plot_toggle").on("click", function() {
+        toggle_gender_plot("agender");
+        d3.select("#agender_plot_toggle").classed("toggle_off", !visible_genders["agender"]);
+      });
 
 			/* load initial name */
 			var existing_name = window.location.hash.replace("#", "");
@@ -397,6 +495,8 @@
 				/* initialize with random name */
 				load_random_name();
 			}
+
+
 
 		});
 	</script>
