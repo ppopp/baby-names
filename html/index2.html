@@ -4,6 +4,7 @@
 	<head>
     <link rel=stylesheet type=text/css href="css/normalize.css">
     <link rel=stylesheet type=text/css href="css/skeleton.css">
+    <link rel=stylesheet type=text/css href="css/bn.slider.css">
 		<style type="text/css">
 
 		svg {
@@ -77,14 +78,17 @@
 
 
 		</style>
-		<script src="js/d3.v3.min.js"></script>
+		<script src="js/d3.v4.min.js"></script>
 		<script src="js/bn.dataview.js"></script>
+		<script src="js/bn.names.js"></script>
+		<script src="js/bn.slider.js"></script>
 		<script src="js/fuse.min.js"></script>
 	</head>
 	<body>
     <div class="container">
       <div class="row">
-        <p>Search for name: <input id="name_search", placeholder="Baby Name..."></p>
+        <p>Search for name: <input id="name_search", list="namelist" placeholder="Baby Name..."></p>
+        <datalist id="namelist"></datalist>
         <button id="random_name_button">Random Name</button>
         <select id="metric_select"></select>
       </div>
@@ -108,10 +112,21 @@
         <div class="eight columns" id="graph"></div>
         <div class="four columns" id="similar_names"></div>
       </div>
+      <div class="row">
+        <div class="eight columns" >
+          <svg width=800 height=50  id="year-slider"></svg>
+        </div>
+      </div>
+      <div class="row">
+        <div class="eight columns" >
+          <svg width=800 height=50  id="range-slider"></svg>
+        </div>
+      </div>
     </div>
 	</body>
 	<script>
 		var max_search_results = 10;
+    var autocomplete_timeout = null;
 		var width = 800;
 		var height = 500;
 		var margin = {
@@ -121,144 +136,159 @@
 			right: 40
 		};
 
-    var dataview = bn.dataview();
+    var names = bn.names().on("load", function() {
+      var dataview = bn.dataview();
+
+      /* setup zoom and scale */
+      /*
+      var zoom = d3.behavior.zoom()
+          .scaleExtent([1, 20])
+          .on("zoom", zoomed);
+      */
+
+      var year_scale = d3.scaleLinear()
+        .domain(dataview.extent_years())
+        .range([0, width]);
+      /*
+      zoom.x(year_scale);
+      */
+
+      var y_scale = d3.scaleLinear()
+        .domain(dataview.extent_values())
+        .range([height, 0]);
+      /*
+      zoom.y(y_scale);
+      */
+
+      /* Define the axes */
+      var xAxis = d3.axisBottom(year_scale).ticks(20).tickFormat(d3.format("d"));
+      var yAxis = d3.axisLeft(y_scale).ticks(5);
+
+        
+      // Adds the svg canvas
+      var svg = d3.select("#graph")
+        .append("svg")
+          .attr("width", width + margin.left + margin.right)
+          .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+          .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+      
+
+      // Add the Axes
+      svg.append("g")
+        .attr("class", "x axis xaxis")
+        .attr("transform", "translate(0," + height + ")")
+        .call(xAxis);
+      svg.append("g")
+        .attr("class", "y axis yaxis")
+        .call(yAxis);
+
+      svg.append("svg:clipPath")
+        .attr("id", "clippath")
+        .append("rect")
+        .attr("width", width)
+        .attr("height", height)
+        .attr("x", 0)
+        .attr("y", 0);
+
+      var container = svg.append("g")
+        .attr("clip-path", "url(#clippath)")
+        .append("g")
+        .attr("class", "container");
+      /*
+      var hittest = svg.append("g");
+      hittest.append("rect")
+        .attr("width", width)
+        .attr("height", height)
+        .attr("x", 0)
+        .attr("y", 0)
+        .attr("id", "hittest")
+        .call(zoom);
+      */
 
 
-    /* fuse options for similar name searching */
-    var fuse_options = {
-      caseSensitive: false,
-      includeScore: false,
-      shouldSort: true,
-      threshold: 0.3,
-      maxPatternLength: 32,
-    };
-    var fuse_search_timer = null;
-    var fuse_search_delay_ms = 500;
+
+      function capitalize(s) {
+        return s.charAt(0).toUpperCase() + s.slice(1);
+      }
+
+      function zoomed() {
+        container.attr("transform", "translate(" + d3.event.translate + ")scale(" + d3.event.scale + ")");
+        svg.select(".yaxis").call(yAxis);
+        svg.select(".xaxis").call(xAxis);
+      }
+
+      function _replot() {
+        /* clear graph */
+        svg.selectAll(".line").remove();
 
 
-    /* setup zoom and scale */
-    var zoom = d3.behavior.zoom()
-        .scaleExtent([1, 20])
-        .on("zoom", zoomed);
+        /* redo axis */
+        svg.select(".yaxis").call(yAxis);
+        svg.select(".xaxis").call(xAxis);
+        container.attr("transform", "translate(0,0)scale(1)");
 
-		var year_scale = d3.scale.linear()
-			.domain(dataview.extent_years())
-			.range([0, width]);
-    zoom.x(year_scale);
+        /* Define the line */
+        var valueline = d3.line()
+          .x(function(d) { return year_scale(d.year); })
+          .y(function(d) { return y_scale(d.value); });
 
-		var y_scale = d3.scale.linear()
-			.domain(dataview.extent_values())
-			.range([height, 0]);
-    zoom.y(y_scale);
+        /* draw lines */
+        dataview.data().forEach(function(data) {
+            
+          /* Add the valueline path. */
+          container.append("path")
+            .attr("class", "line " + data.gender)
+            .attr("d", valueline(data.metric))
+            .attr("vector-effect", "non-scaling-stroke");
+        });
+      }
 
-		/* Define the axes */
-		var xAxis = d3.svg.axis().scale(year_scale)
-			.orient("bottom").ticks(20).tickFormat(d3.format("d"));
-		var yAxis = d3.svg.axis().scale(y_scale)
-      .orient("left").ticks(5);
+      var year_slider = bn.slider(d3.select("#year-slider"))
+        .on("drag", function(range) {
+          year_scale.domain(range);
+          _replot();
+        });
 
-			
-		// Adds the svg canvas
-		var svg = d3.select("#graph")
-			.append("svg")
-				.attr("width", width + margin.left + margin.right)
-				.attr("height", height + margin.top + margin.bottom)
-			.append("g")
-				.attr("transform", "translate(" + margin.left + "," + margin.top + ")");
-    
+      var range_slider = bn.slider(d3.select("#range-slider"))
+        .on("drag", function(range) {
+          y_scale.domain(range);
+          _replot();
+        });
 
-		// Add the Axes
-		svg.append("g")
-			.attr("class", "x axis xaxis")
-			.attr("transform", "translate(0," + height + ")")
-			.call(xAxis);
-		svg.append("g")
-			.attr("class", "y axis yaxis")
-			.call(yAxis);
-
-    svg.append("svg:clipPath")
-      .attr("id", "clippath")
-      .append("rect")
-      .attr("width", width)
-      .attr("height", height)
-      .attr("x", 0)
-      .attr("y", 0);
-
-    var container = svg.append("g")
-      .attr("clip-path", "url(#clippath)")
-      .append("g")
-      .attr("class", "container");
-    var hittest = svg.append("g");
-    hittest.append("rect")
-      .attr("width", width)
-      .attr("height", height)
-      .attr("x", 0)
-      .attr("y", 0)
-      .attr("id", "hittest")
-      .call(zoom);
-
-
-		function capitalize(s) {
-			return s.charAt(0).toUpperCase() + s.slice(1);
-		}
-
-    function zoomed() {
-      container.attr("transform", "translate(" + d3.event.translate + ")scale(" + d3.event.scale + ")");
-      svg.select(".yaxis").call(yAxis);
-      svg.select(".xaxis").call(xAxis);
-    }
-
-
-    /* load list of names */
-		d3.json('data/namelist.json', function(error, data) {
-			var fuse = new Fuse(data.names, fuse_options);
-
+      /* TODO: Finalize slider functionality. range slider should alwyas have show max range
+       * conceivable, but should show how far it's zoomed in.
+       */
 
       dataview.on("update", function() {
         /* set url */
-				window.location.hash = dataview.names().join(',')
+        window.location.hash = dataview.names().join(',')
         /* set graph title */
-				d3.select("#graph_title").text(dataview.names().map(capitalize).join(" + "));
-
-        /* clear graph */
-				svg.selectAll(".line").remove();
+        d3.select("#graph_title").text(dataview.names().map(capitalize).join(" + "));
 
         /* setup scaling */ 
-        y_scale.domain(dataview.extent_values());
+        y_scale.domain([0.0, dataview.extent_values()[1]]);
         if (dataview.metric().invert_y) {
           y_scale.range([0, height]);
         }
         else {
           y_scale.range([height, 0]);
         }
+        range_slider.domain([0.0, dataview.extent_values()[1]]);
+        range_slider.values([0.0, dataview.extent_values()[1]]);
 
-        zoom.y(y_scale);
-        svg.select(".yaxis").call(yAxis);
+        year_slider.domain(dataview.extent_years());
         year_scale.domain(dataview.extent_years())
-        zoom.x(year_scale);
-        svg.select(".xaxis").call(xAxis);
-        container.attr("transform", "translate(0,0)scale(1)");
 
-        /* Define the line */
-        var valueline = d3.svg.line()
-          .x(function(d) { return year_scale(d.year); })
-          .y(function(d) { return y_scale(d.value); });
 
-        /* draw lines */
-        d3.keys(dataview.data()).forEach(function(gender) {
-          var data = dataview.data()[gender];
-            
-          /* Add the valueline path. */
-          container.append("path")
-            .attr("class", "line " + gender)
-            .attr("d", valueline(data.metric))
-            .attr("vector-effect", "non-scaling-stroke");
-        });
+        _replot();
 
         /* set gender button toggles */
         d3.select("#male_plot_toggle").classed("toggle_off", !dataview.gender("male"));
         d3.select("#female_plot_toggle").classed("toggle_off", !dataview.gender("female"));
         d3.select("#agender_plot_toggle").classed("toggle_off", !dataview.gender("agender"));
+
+        update_candidates();
       });
 
 
@@ -277,109 +307,87 @@
       };
 
 
-      /* get similar names */
-      function get_similar_names(input_name, limit) {
-				var locations = fuse.search(input_name);
-				if (locations.length > limit) {
-					locations = locations.slice(0, limit);
-				}
-        return locations.map(function(index) { return data.names[index];});
+      /* update the candidate baby names */
+      function update_candidates() {
+        setTimeout(function() {
+          var candidates = names.similar(dataview.names(), max_search_results);
+          var similar_names = d3.select("#similar_names").selectAll(".similar_name")
+            .data(candidates, function(d) { return d;});
+
+          similar_names.exit().remove();
+
+          similar_names.enter().append("button")
+            .merge(similar_names)
+            .attr("id", function(d) { return "name-" + d;})
+            .attr("class", "similar_name")
+            .text(function(d) { return d;})
+            .on("click", function(d) {
+              toggle_name(d);
+            });
+        }, 0);
       }
 
-
-			/* update the candidate baby names */
-			function update_candidates() {
-        
-        // TODO: more than just first name
-        names = get_similar_names(dataview.names()[0], max_search_results);
-        var similar_names = d3.select("#similar_names").selectAll(".similar_name").data(names, function(d) { return d;});
-        similar_names.enter().append("button")
-          .attr("id", function(d) { return "name-" + d;})
-          .attr("class", "similar_name")
-          .text(function(d) { return d;})
-          .on("click", function(d) {
-            toggle_name(d);
-          });
-        similar_names.exit().remove();
-			}
-
       function toggle_name(name) {
-        var names = dataview.names();
-        pos = names.indexOf(name);
+        var current_names = dataview.names();
+        pos = current_names.indexOf(name);
         if (pos >= 0) {
-          names.split(pos, 1);
+          current_names.splice(pos, 1);
         }
         else {
-          names.push(name);
+          current_names.push(name);
         }
 
         /* TODO: setup button highlighting*/
-        dataview.names(names)
+        dataview.names(current_names)
       }
 
-			function plot_name(name, gender) {
-				var url = 'data/' + name[0].toLowerCase() + '/' + capitalize(name); 
-				if (gender === "agender") {
-					url += '_A.json';
-				}
-				else if (gender === "male") {
-					url += '_M.json';
-				}
-				else if (gender === "female") {
-					url += '_F.json';
-				}
+      d3.select("#name_search").on("keydown", function() {
+        console.log("keydown");
+        var input_data= d3.select("#name_search").property("value");
+        if (event.keyCode == 13) {
+          dataview.names([input_data]);
+        }
+        else if (input_data.length > 1) {
+          if (autocomplete_timeout) {
+            clearTimeout(autocomplete_timeout);
+            autocomplete_timeout = null;
+          }
+          autocomplete_timeout = setTimeout(function() {
+            var query = d3.select("#name_search").property("value");
+            var candidates = names.autocomplete(query);
+            candidates = candidates.slice(0, 20);
+            var options = d3.select("#namelist").selectAll(".name_option").data(candidates);
+            options.exit().remove();
+            options.enter().append("option")
+              .attr("class", "name_option")
+              .merge(options)
+              .attr("value", function(d) { return d;});
+          }, 500);
+        }
+      }).on("input", function(d) { 
+        /* Need to do some odd checking to see if name was slected from dropdown or not. 
+           Typing events have an "inputType", so we ignore those events.
+        */
+        if (typeof event.inputType == 'undefined') {
+          /* check that the input text is one of the candidates */
+          var query = d3.select("#name_search").property("value");
+          var candidates = names.autocomplete(query);
+          if (candidates.indexOf(query) >= 0) {
+            /* someone has chosen an autocomplete spelling */
+            //dataview.names([query]);
+          }
+        }
+      })
 
-        /* load and format name data */
-				d3.json(url, function(error, name_data) {
-					if (error) return console.warn(error);
-					var info = {
-						gender: gender,
-						name: name
-					};
 
-          _metrics.forEach(function(m) {
-            info[m.field] = [];
-            if (name_data.hasOwnProperty(m.source_data)) {
-              var field_data = name_data[m.source_data];
-              for (var i = min_year; i < max_year; i++) {
-                if (field_data.hasOwnProperty(i)) {
-                  info[m.field].push({
-                    year: i,
-                    value: m.transform(field_data[i])
-                  });
-                }
-              }
-            }
-          });
-                
-					graph_data.push(info);
-					replot();
-				});
-			}
+      function load_random_name() {
+        /* initialize with random name */
+        var random_name = names.random();
+        d3.select("#name_search").property("value", random_name);
+        dataview.names([random_name]);
+      }
 
-			d3.select("#name_search").on("input", function() {
-				if (fuse_search_timer) {
-					clearTimeout(fuse_search_timer);
-					fuse_search_timer = null;
-				}
-				fuse_search_timer = setTimeout(update_candidates, fuse_search_delay_ms);
-			})
-			.on("keyup", function() {
-				if (event.keyCode == 13) {
-					var input_data= d3.select("#name_search").property("value");
-					dataview.names([input_data]);
-				}
-			});
-
-			function load_random_name() {
-				/* initialize with random name */
-				var random_name = data.names[Math.floor(Math.random() * data.names.length)];
-				d3.select("#name_search").property("value", random_name);
-				update_candidates();
-				dataview.names([random_name]);
-			}
-
-			d3.select("#random_name_button").on("click", load_random_name);
+      d3.select("#random_name_button").on("click", load_random_name);
 
       /* add plotting toggles */
       function toggle_gender_plot(gender) {
@@ -396,22 +404,19 @@
         dataview.gender("agender", !dataview.gender("agender"));
       });
 
-			/* load initial name */
-			var existing_names = window.location.hash.replace("#", "").split(",");
-			if (existing_names.length >= 1) {
-				/* load existing name from url hash */
-				d3.select("#name_search").property("value", existing_names[0]);
+      /* load initial name */
+      var existing_names = window.location.hash.replace("#", "")
+        .split(",")
+        .filter(function(d) { return d.length > 1; });
+      if (existing_names.length >= 1) {
+        /* load existing name from url hash */
+        d3.select("#name_search").property("value", existing_names[0]);
         dataview.names(existing_names);
-				update_candidates();
-			}
-			else {
-				/* initialize with random name */
-				load_random_name();
-			}
+      }
+    });
 
 
 
-		});
 	</script>
 </html>
 

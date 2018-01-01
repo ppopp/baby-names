@@ -1,0 +1,46 @@
+.bn-slider-ticks {
+  font: 10px sans-serif;
+}
+
+.bn-slider-track,
+.bn-slider-track-inset,
+.bn-slider-track-overlay {
+  stroke-linecap: round;
+}
+
+.bn-slider-track {
+  stroke: #000;
+  stroke-opacity: 0.3;
+  stroke-width: 10px;
+}
+
+.bn-slider-track-range {
+  stroke: #000;
+  stroke-opacity: 0.3;
+  stroke-width: 10px;
+}
+
+.bn-slider-track-inset {
+  stroke: #ddd;
+  stroke-width: 8px;
+}
+
+.bn-slider-track-overlay {
+  pointer-events: stroke;
+  stroke-width: 50px;
+  stroke: transparent;
+  cursor: crosshair;
+}
+
+.bn-slider-upper-handle {
+  fill: #fff;
+  stroke: #000;
+  stroke-opacity: 0.5;
+  stroke-width: 1.25px;
+}
+.bn-slider-lower-handle {
+  fill: #fff;
+  stroke: #000;
+  stroke-opacity: 0.5;
+  stroke-width: 1.25px;
+}

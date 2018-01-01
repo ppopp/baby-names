@@ -2,6 +2,7 @@ import operator
 import logging
 import os
 import json
+import math
 
 _logger = logging.getLogger(__name__)
 
@@ -46,19 +47,38 @@ def merge_genders(names):
             merged[key]['gender'] = 'A'
     return merged.values()
 
-def popularity(names):
+def yearly_stats(names):
     '''
-    Calculates popularity of names and adds information to names
+    Calculates popularity, diversity index and rank of names and adds information to names
     '''
     _logger.info('calculating yearly stats')
     by_year = _group_by('year', names)
     year_totals = {}
     for year, year_names in by_year.iteritems():
         year_totals[year] = sum(map(operator.itemgetter('count'), year_names))
+
+        sorted_names = sorted(names, key=operator.itemgetter('count'), reverse=True)
+        cntr = 1
+        last_count = sorted_names[0]['count']
+        last_rank = 1
+        sorted_names[0]['rank'] = 1
+        for name in sorted_names[1:]:
+            cntr += 1
+            if name['count'] < last_count:
+                name['rank'] = cntr
+                last_rank = cntr
+                last_count = name['count']
+            else:
+                name['rank'] = last_rank
     
     _logger.info('calculating name yearly popularity')
     for name in names:
         name['popularity'] = float(name['count']) / float(year_totals[name['year']])
+        name['diversity_index'] = -1.0 * name['popularity'] * math.log(name['popularity'])
+        if name['popularity'] > 0.0:
+            name['log_popularity'] = 100.0 + (15.0 * math.log10(name['popularity']))
+        else:
+            name['log_popuarlity'] = 0.0
 
     return names
 
@@ -134,14 +154,23 @@ def write_names(names, output_directory):
     by_name = _group_by('name', names)
 
     for name, name_data in by_name.iteritems():
-        popularity = {}
-        counts = {}
-        gender = ''
+        # organize name data into yearly info
+        output = {
+            'name': name,
+            'gender': name_data[0]['gender']
+        }
+
         for entry in name_data:
             year = int(entry['year'])
-            popularity[year] = entry['popularity']
-            counts[year] = entry['count']
-            gender = entry['gender']
+            keys = entry.keys()
+            keys.remove('gender')
+            keys.remove('year')
+            keys.remove('name')
+            for k in keys:
+                value = entry[k]
+                if not (k in output):
+                    output[k] = {}
+                output[k][year] = value
 
         name_directory = os.path.join(output_directory, name[0].lower())
         if not os.path.isdir(name_directory):
@@ -149,15 +178,9 @@ def write_names(names, output_directory):
 
         output_path = os.path.join(
             name_directory,
-            name + '_' +  gender + '.json')
-
-        output_data = {}
-        output_data['name'] = name
-        output_data['gender'] = gender
-        output_data['counts'] = counts
-        output_data['popularity'] = popularity
+            '{0}_{1}.json'.format(output['name'], output['gender']))
 
         _logger.debug('writing output to {0}'.format(output_path))
-        json.dump(output_data, open(output_path, 'w'))
+        json.dump(output, open(output_path, 'w'))
 
 

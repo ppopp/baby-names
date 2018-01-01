@@ -13,6 +13,7 @@ _logger = logging.getLogger(__name__)
 
 
 def _main(**kwargs):
+    _logger.info('loading from {0}'.format(kwargs['input_directory']))
     names = us_ss.load(kwargs['input_directory'])
 
     # separate names into groups 
@@ -23,13 +24,13 @@ def _main(**kwargs):
     name_groups = [male_names, female_names]
     for i, name_group in enumerate(name_groups):
         _logger.info('processesing name set {0} of {1}'.format(i, len(name_groups)))
-        name_group = crunch.popularity(name_group)
+        name_group = crunch.yearly_stats(name_group)
         crunch.write_names(name_group, kwargs['output_directory'])
 
     # process global information 
     all_names = crunch.merge_genders(names)
     _logger.info('processing all names')
-    all_names = crunch.popularity(all_names)
+    all_names = crunch.yearly_stats(all_names)
     crunch.write_names(all_names, kwargs['output_directory'])
 
     # write name list

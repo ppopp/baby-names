@@ -71,15 +71,15 @@ var bn = bn || {};
 
       /* TODO: update years? */
       /* TODO: on range change? */
-      _call_handler("update", _data);
+      _call_handler("update", _data.filter(function(d) { return _genders[d.gender]; }));
     }
 
     function _merge_names() {
       /* TODO: this also needs to be called on update metric */
       data = [];
       var merge_data = {};
-      d3.entries(_name_data).forEach(function(name_entry) {
-        d3.entries(name_entry.value).forEach(function(gender_entry) {
+      _names.forEach(function(name) {
+        d3.entries(_name_data[name]).forEach(function(gender_entry) {
           var gender = gender_entry.key;
           var d = gender_entry.value;
           if (!merge_data.hasOwnProperty(gender)) {
@@ -109,7 +109,9 @@ var bn = bn || {};
           }
           return sum;
         }, []);
+        merge_data[gender].metric.sort(function(a, b) { return a.year - b.year });
       });
+
 
       /* turn object with name keys into an array */
       _data = d3.values(merge_data);
@@ -123,12 +125,19 @@ var bn = bn || {};
       _names.forEach(function(name) {
         /* don't load names if already loaded */
         if (_name_data.hasOwnProperty(name)) {
-          return;
+          var ready = _names.every(function(n) {
+            return d3.keys(_genders).every(function(g) {
+              return _name_data.hasOwnProperty(n) ? _name_data[n].hasOwnProperty(g) : false;
+            });
+          });
+          if (ready) {
+            _merge_names();
+          }
         }
         _name_data[name] = {};
         
         /* get urls for names */
-        var base_url = 'data/' + name[0].toLowerCase() + '/' + capitalize(name); 
+        var base_url = 'data/' + name[0].toLowerCase() + '/' + _capitalize(name); 
         var gender_urls = {
           agender: base_url + '_A.json',
           male: base_url + '_M.json',
@@ -247,7 +256,6 @@ var bn = bn || {};
         }
         else if (arguments.length > 1) {
           _genders[arguments[0]] = arguments[1];
-          console.log(_genders);
           _update_range();
         }
         return this;
@@ -256,7 +264,7 @@ var bn = bn || {};
       /** NAMES **/
       names: function() {
         if (arguments.length == 0) {
-          return _names;
+          return _names.slice();
         }
         _names = arguments[0];
         _update_names();
@@ -264,7 +272,9 @@ var bn = bn || {};
 
       /** DATA **/
       data: function() {
-        return _data;
+        return _data.filter(function(d) { 
+          return _genders[d.gender]; 
+        }); 
       }
     };
   }

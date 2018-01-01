@@ -70,6 +70,10 @@
 			width: 200px;
 		}
 
+    .similar_name {
+      display: block;
+    }
+
 
 
 		</style>
@@ -100,27 +104,13 @@
         </div>
       </div>
       <div class="row">
-        <div id="graph"></div>
-      </div>
-      <div class="row">
-        <div class="name_list" id="similar_spelling_names">
-          <h2>Similarly Spelled Names</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Most Popular Year</th>
-              </tr>
-            </thead>
-            <tbody class="vertical_name_list"></tbody>
-          </table>
-          
-        </div>
+        <div class="eight columns" id="graph"></div>
+        <div class="four columns" id="similar_names"></div>
       </div>
     </div>
 	</body>
 	<script>
-		var max_search_results = 50;
+		var max_search_results = 10;
 		var min_year = 1880;
 		var max_year = 2016;
 		var width = 800;
@@ -137,7 +127,7 @@
 		var name_centroids = {}
 		var year_lists = {}
 
-    var metrics = [
+    var _metrics = [
       { 
         field:"popularity", 
         display:"Popularity", 
@@ -160,7 +150,7 @@
         transform: function(d) { return Math.round(d * 1000000);}
       }
     ];
-    var metric = metrics[0];
+    var _metric = _metrics[0];
 
     /* fuse options for similar name searching */
     var fuse_options = {
@@ -172,6 +162,7 @@
     };
     var fuse_search_timer = null;
     var fuse_search_delay_ms = 500;
+    var _loaded_names = [];
 
 
     /* setup zoom and scale */
@@ -259,16 +250,16 @@
 			}
 
       /* setup scaling and orientation */
-      function set_graph_scale_and_orientation(visible_data, metric) {
+      function set_graph_scale_and_orientation(visible_data) {
           var extremes = [];
 
           /* get maximum value of all popularities */
           visible_data.forEach(function(name_gender) {
-            extremes = extremes.concat(d3.extent(name_gender[metric.field], function(x) { return x.value; }));
+            extremes = extremes.concat(d3.extent(name_gender.metric, function(x) { return x.value; }));
           });
           y_domain = d3.extent(extremes)
           y_scale.domain(y_domain);
-          if (metric.invert_y) {
+          if (_metric.invert_y) {
             y_scale.range([0, height]);
           }
           else {
@@ -287,10 +278,51 @@
 			/* replot everything after loading data into "popularity" */
 			function replot() {
 				clear_graph();
-        var visible_graph_data = graph_data.filter(function(d) { return visible_genders[d.gender];});
+        var included_graph_data = graph_data.filter(function(d) { return visible_genders[d.gender];});
+        /* merge multiple names */
+        var visible_graph_data = {};
+        included_graph_data.forEach(function(d) {
+          if (!visible_graph_data.hasOwnProperty(d.gender)) {
+            visible_graph_data[d.gender] = { gender: d.gender, name: d.name, metric: d[_metric.field] };
+          }
+          else {
+            visible_graph_data[d.gender].name += " + " + d.name;
+            visible_graph_data[d.gender].metric = visible_graph_data[d.gender].metric.concat(d[_metric.field]);
+          }
+        });
+        console.log("before");
+        console.log(visible_graph_data);
+        /* merge multiple names by adding */
+        d3.keys(visible_graph_data).forEach(function(gender) {
+          /* TODO: fix me */
+          //console.log(visible_graph_data[gender].metric);
+          visible_graph_data[gender].metric = visible_graph_data[gender].metric.reduce(function(sum, val) {
+            var found = false;
+
+            for (var i = 0; i < sum.length; i++) {
+              if (sum[i].year == val.year) {
+                sum[i].value += val.value;
+                console.log(sum[i].value);
+                found = true;
+              }
+            }
+            if (!found) {
+              sum.push(val);
+            }
+            return sum;
+            }, []);
+        });
+
+        visible_graph_data = d3.values(visible_graph_data);
+        console.log("after");
+        console.log(visible_graph_data);
+
+
+
+
 
         if (visible_graph_data.length > 0) {
-          set_graph_scale_and_orientation(visible_graph_data, metric);
+          set_graph_scale_and_orientation(visible_graph_data);
           /* plot lines */
           visible_graph_data.forEach(function(name_gender) {
             // Define the line
@@ -301,7 +333,7 @@
             // Add the valueline path.
             container.append("path")
               .attr("class", "line " + name_gender.gender)
-              .attr("d", valueline(name_gender[metric.field]))
+              .attr("d", valueline(name_gender.metric))
               .attr("vector-effect", "non-scaling-stroke");
           });
         }
@@ -309,96 +341,76 @@
 
       /* setup combo box for choosing metrics */
       var select = d3.select('#metric_select').on('change', set_metric)
-      var options = select.selectAll('option').data(metrics).enter()
+      var options = select.selectAll('option').data(_metrics).enter()
         .append('option')
         .text(function (d) { return d.field; })
         .attr("label", function(d) { return d.display; });
 
       function set_metric() {
         var selected_metric = d3.select('#metric_select').property('value')
-        metric = metrics.filter(function(d) { return d.field == selected_metric; })[0];
+        _metric = _metrics.filter(function(d) { return d.field == selected_metric; })[0];
         replot();
       };
 
 			/* add name to list of similar names */
-			function add_candidate(name) {
-				var url = 'data/' + name[0].toLowerCase() + '/' + capitalize(name) + '_A.json';
-				var name_max_year = '';
-				var name_max_y = 0;
 
-				d3.json(url, function(name_data) {
-					var pop = name_data.popularity;
-					for (var year in pop) {
-						if (pop.hasOwnProperty(year)) {
-							if (pop[year] > name_max_y) {
-								name_max_y = pop[year];
-								name_max_year = year;
-							}
-						}
-					}
-					var name_list = d3.select("#similar_spelling_names").select(".vertical_name_list");
-					var row = name_list.append("tr");
-					row.append("td").html(name);
-					row.on("click", function() {
-						var input_data= d3.select("#name_search").property("value", name);
-						update_candidates();
-						load_name(name);
-					});
-				});
-			}
+      /* get similar names */
+      function get_similar_names(input_name, limit) {
+				var locations = fuse.search(input_name);
+				if (locations.length > limit) {
+					locations = locations.slice(0, limit);
+				}
+        return locations.map(function(index) { return data.names[index];});
+      }
+
 
 			/* update the candidate baby names */
 			function update_candidates() {
-				var input_data= d3.select("#name_search").property("value");
-				var locations = fuse.search(input_data);
-				if (locations.length > max_search_results) {
-					locations = locations.slice(0, max_search_results);
-				}
-
-				var name_holder = d3.select("#similar_spelling_names").select(".vertical_name_list");
-				name_holder.html("");
-				var candidate_names = [];
-				locations.forEach(function(index) {
-					var babyname = data.names[index];
-					add_candidate(babyname);
-				});
+        
+        // TODO: more than just first name
+        names = get_similar_names(_loaded_names[0], max_search_results);
+        var similar_names = d3.select("#similar_names").selectAll(".similar_name").data(names, function(d) { return d;});
+        similar_names.enter().append("button")
+          .attr("id", function(d) { return "name-" + d;})
+          .attr("class", "similar_name")
+          .text(function(d) { return d;})
+          .on("click", function(d) {
+            toggle_name(d);
+          });
+        similar_names.exit().remove();
 			}
 
-			function display_year_data(name) {
-				var name_holder = d3.select("#similar_year_names").select(".vertical_name_list");
-				name_holder.html("");
-				if (name_centroids.hasOwnProperty(name)) {
-					var y = name_centroids[name];
-					if (year_lists.hasOwnProperty(y)) {
-						var data = year_lists[y];
-						var rows = name_holder.selectAll("tr").data(data);
-						var row = rows.enter().append("tr")
-							.on("click", function(x) {
-								var input_data= d3.select("#name_search").property("value", x);
-								update_candidates();
-								load_name(x);
-							});
-						row.append("td").html(function(x) { return x; })
-						row.append("td").html(y);
-						rows.exit().remove();
-					}
-				}
-			}
 
 
 			/* load data for a new name */
-			function load_name(name) {
-				window.location.hash = name
-				if (name.length < 1) {
+			function load_names(names) {
+				window.location.hash = names.join(',')
+				if (names.length < 1) {
 					return;
 				}
 				clear_graph();
+        _loaded_names = names;
 				graph_data = [];
-				d3.select("#graph_title").text(capitalize(name));
-				plot_name(name, "agender");
-				plot_name(name, "male");
-				plot_name(name, "female");
+				d3.select("#graph_title").text(names.map(capitalize).join(" + "));
+        names.forEach(function(name) {
+          plot_name(name, "agender");
+          plot_name(name, "male");
+          plot_name(name, "female");
+        });
 			}
+
+      function toggle_name(name) {
+        pos = _loaded_names.indexOf(name);
+        if (pos >= 0) {
+          _loaded_names.split(pos, 1);
+        }
+        else {
+          _loaded_names.push(name);
+        }
+
+        /* TODO: setup button highlighting*/
+        load_names(_loaded_names);
+      }
 
 			function plot_name(name, gender) {
 				var url = 'data/' + name[0].toLowerCase() + '/' + capitalize(name); 
@@ -420,15 +432,15 @@
 						name: name
 					};
 
-          metrics.forEach(function(metric) {
-            info[metric.field] = [];
-            if (name_data.hasOwnProperty(metric.source_data)) {
-              var field_data = name_data[metric.source_data];
+          _metrics.forEach(function(m) {
+            info[m.field] = [];
+            if (name_data.hasOwnProperty(m.source_data)) {
+              var field_data = name_data[m.source_data];
               for (var i = min_year; i < max_year; i++) {
                 if (field_data.hasOwnProperty(i)) {
-                  info[metric.field].push({
+                  info[m.field].push({
                     year: i,
-                    value: metric.transform(field_data[i])
+                    value: m.transform(field_data[i])
                   });
                 }
               }
@@ -450,7 +462,7 @@
 			.on("keyup", function() {
 				if (event.keyCode == 13) {
 					var input_data= d3.select("#name_search").property("value");
-					load_name(input_data);
+					load_names([input_data]);
 				}
 			});
 
@@ -459,7 +471,7 @@
 				var random_name = data.names[Math.floor(Math.random() * data.names.length)];
 				d3.select("#name_search").property("value", random_name);
 				update_candidates();
-				load_name(random_name);
+				load_names([random_name]);
 			}
 
 			d3.select("#random_name_button").on("click", load_random_name);
@@ -484,12 +496,13 @@
       });
 
 			/* load initial name */
-			var existing_name = window.location.hash.replace("#", "");
-			if (existing_name.length > 1) {
+			var existing_names = window.location.hash.replace("#", "").split(",");
+			if (existing_names.length >= 1) {
 				/* load existing name from url hash */
-				d3.select("#name_search").property("value", existing_name);
+				d3.select("#name_search").property("value", existing_names[0]);
+        /* TODO: parse multiple names */
+				load_names(existing_names);
 				update_candidates();
-				load_name(existing_name);
 			}
 			else {
 				/* initialize with random name */
